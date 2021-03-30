@@ -14,7 +14,7 @@ from plotly import graph_objects as go
 import copy
 import glob
 
-def to_tsv(path=None, outdir='out'):
+def to_tsv(path=None, outdir='out', suffix='annotated'):
     '''
     Extract data from CNVfinder's XLSX output and save as TSV, kinda like CNVfinder already does
     '''
@@ -23,15 +23,15 @@ def to_tsv(path=None, outdir='out'):
             print(filename)
             basename = filename.split('.')[0]
             workbook = openpyxl.load_workbook(filename=filename)
-            # Assume that the sheet is named `<samplename>_cnvs-annotated` 
-            sheet = workbook[basename+'_cnvs-annotated']
-            with open(os.path.join(outdir, basename+"_cnvs-annotated.tsv"), "w") as f:
+            # Assume that the sheet is named `<samplename>_cnvs-<suffix>` 
+            sheet = workbook[basename+'_cnvs-'+suffix]
+            with open(os.path.join(outdir, basename+"_cnvs-'+suffix+'.tsv"), "w") as f:
                 for row in sheet.rows:
                     f.write('\t'.join(str(x.value) for x in row)+'\n')
 
 
 
-def do_sum(path=None, recursive=True, bonferroni=0.05, minscore=0.5):
+def do_sum(path=None, suffix='annotated', recursive=True, bonferroni=0.05, minscore=0.5):
     '''
     Resume all data by chromosome and by gain/loss
     '''
@@ -48,58 +48,57 @@ def do_sum(path=None, recursive=True, bonferroni=0.05, minscore=0.5):
                        }
         
     '''
-    for filename in glob.glob(os.path.join(path, '*_cnvs-annotated.tsv'), recursive=recursive):
-        if filename.endswith('_cnvs-annotated.tsv'):
-            print(filename)
-            basename = os.path.basename(filename).split('_cnvs-')[0]
-            
-            for line in open(filename, "r"):
-                # Ignore the header
-                if line.startswith('cnv id'):
-                    continue
-                else:
-                    line = line.split('\t')
-                    cnvname, chrom, start, end, *_ = line
-                    # Need to pass through float because apparently sometimes it's represented as float
-                    start = int(float(start))
-                    end = int(float(end))
-                    gainloss = line[15]
-                    bonf = float(line[17])
-                    score = float(line[11])
-                    chromosomes = all_chromosomes[gainloss]
-                    # Only pass calls with Bonferroni below threshold and score of at least threshold
-                    if bonf < bonferroni and score >= minscore:
-                        if chrom not in chromosomes:
-                            chromosomes[chrom] = dict()
-                            chromosomes[chrom][start] = [1, [basename]]
-                            chromosomes[chrom][end+1] = [0, []]
-                        else:
-                            curr = sorted(list(chromosomes[chrom].keys()))
-                            pre = None
-                            first = None
-                            last = None
-                            for item in curr:
-                                if item < start:
-                                    pre = item
-                                elif item >= start and item <= end:
-                                    chromosomes[chrom][item][0] += 1
-                                    chromosomes[chrom][item][1].append(basename)
-                                    if first is None:
-                                        first = item
-                                    last = item
-                            if start not in chromosomes[chrom]:
-                                if pre is None:
-                                    chromosomes[chrom][start] = [1, [basename]]
-                                else:
-                                    chromosomes[chrom][start] = [chromosomes[chrom][pre][0] + 1,
-                                                                 chromosomes[chrom][pre][1] + [basename]]
-                            if end+1 not in chromosomes[chrom]:
-                                if pre is None or last is None:
-                                    chromosomes[chrom][end+1] = [0, []]
-                                else:
-                                    chromosomes[chrom][end+1] = [chromosomes[chrom][last][0] - 1,
-                                                                 chromosomes[chrom][last][1].copy()]
-                                    chromosomes[chrom][end+1][1].remove(basename)
+    for filename in glob.glob(os.path.join(path, '*_cnvs-'+suffix+'.tsv'), recursive=recursive):
+        print(filename)
+        basename = os.path.basename(filename).split('_cnvs-')[0]
+        
+        for line in open(filename, "r"):
+            # Ignore the header
+            if line.startswith('cnv id'):
+                continue
+            else:
+                line = line.split('\t')
+                cnvname, chrom, start, end, *_ = line
+                # Need to pass through float because apparently sometimes it's represented as float
+                start = int(float(start))
+                end = int(float(end))
+                gainloss = line[15]
+                bonf = float(line[17])
+                score = float(line[11])
+                chromosomes = all_chromosomes[gainloss]
+                # Only pass calls with Bonferroni below threshold and score of at least threshold
+                if bonf < bonferroni and score >= minscore:
+                    if chrom not in chromosomes:
+                        chromosomes[chrom] = dict()
+                        chromosomes[chrom][start] = [1, [basename]]
+                        chromosomes[chrom][end+1] = [0, []]
+                    else:
+                        curr = sorted(list(chromosomes[chrom].keys()))
+                        pre = None
+                        first = None
+                        last = None
+                        for item in curr:
+                            if item < start:
+                                pre = item
+                            elif item >= start and item <= end:
+                                chromosomes[chrom][item][0] += 1
+                                chromosomes[chrom][item][1].append(basename)
+                                if first is None:
+                                    first = item
+                                last = item
+                        if start not in chromosomes[chrom]:
+                            if pre is None:
+                                chromosomes[chrom][start] = [1, [basename]]
+                            else:
+                                chromosomes[chrom][start] = [chromosomes[chrom][pre][0] + 1,
+                                                             chromosomes[chrom][pre][1] + [basename]]
+                        if end+1 not in chromosomes[chrom]:
+                            if pre is None or last is None:
+                                chromosomes[chrom][end+1] = [0, []]
+                            else:
+                                chromosomes[chrom][end+1] = [chromosomes[chrom][last][0] - 1,
+                                                             chromosomes[chrom][last][1].copy()]
+                                chromosomes[chrom][end+1][1].remove(basename)
     # Prettify the data
     for gainloss in all_chromosomes:
         for chrom in all_chromosomes[gainloss]:
@@ -164,24 +163,22 @@ def plot_figures(data, outdir='out', extratitletext=''):
         #fig.update_yaxes(range=[-24, 24])
         fig.write_image(os.path.join(outdir, chrom+'.jpeg'))
         fig.write_html(os.path.join(outdir, chrom+'.html'))
-        
-        
-        
-
+      
 
 if __name__ == '__main__':
+    path = '/home/user/analysis/baseline-CNVs/results-median/cnv-analysis/**'
+    suffix = 'classified' # 'annotated'
     outdir = 'out'
     bonferroni = 0.05
     minscore = 0.5
+    figtext = 'baseline data'
     
     #print('Extracting data from .xlsx')
     #to_tsv(path=None, outdir=outdir)
     print('Summarizing data from TSVs')
-    all_chromosomes = do_sum(path=outdir, recursive=True, bonferroni=bonferroni, minscore=minscore)
+    all_chromosomes = do_sum(path=path, suffix=suffix, recursive=True, bonferroni=bonferroni, minscore=minscore)
     #print('writing count files')
     #write_gainloss(data=all_chromosomes, outdir=outdir)
     print('printing figures')
     plot_figures(data=all_chromosomes, outdir=outdir, 
-                 extratitletext="Bonferroni < {}, score >= {}".format(bonferroni, minscore))
-    
-    
+                 extratitletext="{}, Bonferroni < {}, score >= {}".format(figtext, bonferroni, minscore))
